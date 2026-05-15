@@ -58,20 +58,44 @@ GLOBAL BOOL NPX_ADDRESS_SIZE_32 = 0;
 
 LOCAL CONTEXT m_context={0};
 
-// TODO: Check if FLDENV/FSTENV is faster than GetThreadContext()...?
+/*
+   Swap host FPU state with the guest's, run the guest FPU op, then swap
+   back. The original scheme used Get/SetThreadContext (4 kernel calls per
+   FPU instruction, ~40000 cycles of overhead for a ~1 cycle FPU op).
+   FNSAVE/FRSTOR are user-mode x87 instructions that save/restore the full
+   108-byte FPU state in ~75 cycles each.
 
-// Save current Thread context, load FPU context from virtual CPU
-#define INIT_FPU_CMD \
-	CONTEXT context={0}; \
-	IS32 WORD_PTR; \
-	context.ContextFlags = CONTEXT_FLOATING_POINT; \
-	GetThreadContext((HANDLE)0xFFFFFFFE, &context); \
-	SetThreadContext((HANDLE)0xFFFFFFFE, &m_context); \
+   m_context.FloatSave is a Windows FLOATING_SAVE_AREA whose first 108 bytes
+   match the FNSAVE protected-mode layout exactly, so we target it via a
+   typed pointer local. Old MSVC __asm won't accept the struct-member form
+   `frstor m_context.FloatSave` as a memory operand (C2400), so we take
+   the address once into `guest_fpu`, load it into EAX, and use [EAX]. The
+   Cr0NpxState field at offset 108 of FloatSave is untouched -- FNSAVE only
+   writes 108 bytes.
 
-// After execution, restore FPU status again
-#define DONE_FPU_CMD \
-	GetThreadContext((HANDLE)0xFFFFFFFE, &m_context); \
-	SetThreadContext((HANDLE)0xFFFFFFFE, &context);
+   host_fpu_save / guest_fpu are declared in INIT_FPU_CMD; both live for the
+   rest of the function so DONE_FPU_CMD can name them.
+ */
+/*
+   NB: each instruction is its own __asm directive rather than one
+   __asm { ... } block. Inside braces, MSVC uses newlines as instruction
+   separators -- which the preprocessor strips out of multi-line macros,
+   collapsing every instruction onto one line and producing C2400 syntax
+   errors. The single-directive form survives macro expansion intact and
+   matches the rest of this file's FPU dispatch style.
+ */
+#define INIT_FPU_CMD					\
+	IU8 host_fpu_save[108];				\
+	FLOATING_SAVE_AREA *guest_fpu = &m_context.FloatSave; \
+	IS32 WORD_PTR;					\
+	__asm mov eax, guest_fpu			\
+	__asm fnsave host_fpu_save			\
+	__asm frstor [eax]
+
+#define DONE_FPU_CMD					\
+	__asm mov eax, guest_fpu			\
+	__asm fnsave [eax]				\
+	__asm frstor host_fpu_save
 
 // Stupid compiler doesn't support WORD PTR in inline asm..???
 #define INIT_WORD_PTR WORD_PTR = (IS32)((IS16)ops[0].sng);
@@ -1281,6 +1305,15 @@ LOCAL VOID npx_fist_word() {
 	D_Ew(0, WO0, PG_W);
 	INIT_WORD_PTR
 	__asm FIST	DWORD PTR WORD_PTR
+	/*
+	   FIST wrote the integer result to the stack local WORD_PTR (because
+	   the inline assembler doesn't accept WORD PTR ops[0].sng), but
+	   P_Ew(0) below writes ops[0].sng to guest memory. Copy the result
+	   across so the guest sees the actual FIST value, not whatever stale
+	   data was previously in ops[0].sng. Was a latent bug masked by the
+	   old Get/SetThreadContext scheme being a silent no-op on m_context.
+	 */
+	ops[0].sng = (IU32)(IU16)WORD_PTR;
 	P_Ew(0);
 
 	DONE_FPU_CMD
@@ -1302,6 +1335,8 @@ LOCAL VOID npx_fistp_word() {
 	D_Ew(0, WO0, PG_W);
 	INIT_WORD_PTR
 	__asm FISTP	DWORD PTR WORD_PTR
+	/* See npx_fist_word for why this copy is needed. */
+	ops[0].sng = (IU32)(IU16)WORD_PTR;
 	P_Ew(0);
 
 	DONE_FPU_CMD
@@ -2727,18 +2762,23 @@ LOCAL VOID npx_funimp() {
 }
 
 LOCAL VOID npx_finit() {
-	CONTEXT context;
-	IU32 NpxControl = 0x037f;
+	/*
+	   FNSAVE resets the FPU to the FINIT default state as a side effect
+	   (control word 0x37F, status word 0, tag word 0xFFFF, registers
+	   cleared), so we don't need an explicit FINIT. Save host FPU first,
+	   then save the now-default state to m_context, then restore host.
 
-	m_context.ContextFlags = CONTEXT_FLOATING_POINT;
-	GetThreadContext(GetCurrentThread(), &m_context);
-	memcpy(&context, &m_context, sizeof(context));
-
-	//_controlfp(0, 0x037f);
-	__asm FINIT
-	__asm FSTCW NpxControl
-
-	DONE_FPU_CMD
+	   Use the same EAX/[EAX] indirection as the macros because old MSVC
+	   __asm won't accept `fnsave m_context.FloatSave` as a memory operand.
+	   Single-directive __asm form for consistency with the rest of this
+	   file (and to avoid any __asm{} parsing surprises).
+	 */
+	IU8 host_fpu_save[108];
+	FLOATING_SAVE_AREA *guest_fpu = &m_context.FloatSave;
+	__asm mov eax, guest_fpu
+	__asm fnsave host_fpu_save
+	__asm fnsave [eax]
+	__asm frstor host_fpu_save
 }
 
 LOCAL VOID (*inst_table[])() = {
@@ -4870,4 +4910,21 @@ GLOBAL void npx_reset IFN0()
 
 GLOBAL VOID InitNpx IFN1(IBOOL, disabled)
 {
+   /*
+      Seed m_context.FloatSave with the FNINIT default state. The original
+      Get/SetThreadContext scheme didn't need this because the macros never
+      set m_context.ContextFlags = CONTEXT_FLOATING_POINT, so SetThreadContext
+      was a no-op -- the FPU just kept running in the host's state and
+      m_context was a vestigial cache. The FNSAVE/FRSTOR scheme actually
+      swaps state per dispatch, so a zeroed m_context.FloatSave would feed
+      FRSTOR an invalid state (TagWord=0 means "all 8 registers contain
+      valid values", causing FLD/etc. to see a full stack and overflow).
+
+      FNINIT defaults: ControlWord=0x37F, StatusWord=0, TagWord=0xFFFF
+      (all empty), all other fields zero.
+    */
+   memset(&m_context.FloatSave, 0, sizeof(m_context.FloatSave));
+   m_context.FloatSave.ControlWord = 0x037F;
+   m_context.FloatSave.TagWord     = 0xFFFF;
+   /* `disabled` parameter intentionally unused (matches original stub). */
 }

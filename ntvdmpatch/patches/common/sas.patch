@@ -332,7 +332,12 @@
 > #else /* i386 && BACK_M */
 899a1124
 > #endif
-1005,1006c1230,1295
+1003a1229,1232
+> 	SAS_MEM_TYPE src_type;
+> #ifdef EGG
+> 	sys_addr dest_phy;
+> #endif
+1005,1006c1234,1330
 < 	for (offset = 0; offset < len; offset++) {
 < 		c_sas_store(dest + offset, c_sas_hw_at(src + offset));
 ---
@@ -343,8 +348,42 @@
 > 	}
 > 
 > 	src &= SasWrapMask;
-> 	
-> 	switch (readSelfMod(src, len)) {
+> 	src_type = readSelfMod(src, len);
+> 
+> #ifdef EGG
+> 	/*
+> 	 * If the destination is VIDEO, do a per-byte read+write loop. This
+> 	 * preserves the exact semantics of the per-instruction REP MOVSB:
+> 	 *   phy_r8(src)        - VIDEO src loads latches via cvidc byte read
+> 	 *   c_sas_store(dest,) - VIDEO dst dispatches through cvidc byte write
+> 	 *                        handler (correct mark_byte, correct plane
+> 	 *                        distribution in all chain modes).
+> 	 *
+> 	 * Required because the bulk VIDEO->VIDEO path below has a known bug
+> 	 * (the (src-base)*2+base hack at temp_func call), and because the
+> 	 * RAM-src/VIDEO-dst path used to fall through to c_sas_stores which
+> 	 * is byte-equivalent for byte ops but not for word/dword ops.
+> 	 *
+> 	 * NB: per-element dispatch is what the old per-instruction MOVSB
+> 	 * loop did; skipping CPU decode/commit overhead still wins from
+> 	 * fast_rep_movs.
+> 	 */
+> 	dest_phy = dest;
+> 	if (getPG())
+> 	{
+> 		if (!xtrn2phy(dest, bios_read_accreq() | PG_W, &dest_phy))
+> 			return;
+> 	}
+> 	if (readSelfMod(dest_phy & SasWrapMask, len) == SAS_VIDEO)
+> 	{
+> 		for (offset = 0; offset < len; offset++) {
+> 			c_sas_store(dest + offset, phy_r8(src + offset));
+> 		}
+> 		return;
+> 	}
+> #endif /* EGG */
+> 
+> 	switch (src_type) {
 > 		case SAS_MM_LIM:
 > 		case SAS_RAM:
 > 		case SAS_ROM:
@@ -354,6 +393,11 @@
 > 
 > #ifdef	EGG
 > 		case SAS_VIDEO:
+> 			/*
+> 			 * VIDEO source, non-VIDEO dest (VIDEO dest handled above).
+> 			 * Dest is RAM/LIM/ROM/INACCESSIBLE — use the cvidc string
+> 			 * read into a host pointer. ROM/INACCESSIBLE short-circuit.
+> 			 */
 > 			if (getPG())
 > 			{
 > 				if (!xtrn2phy(dest, bios_read_accreq() | PG_W, &dest))
@@ -383,15 +427,7 @@
 > 				default:
 > 					printf("Unknown Sas type\n");
 > 					force_yoda();
-> 
-> #ifdef C_VID
-> 				case SAS_VIDEO:	/* Video -> Video */
-> 					temp_func = read_b_move_ptrs(SAS_VIDEO);
-> 					/* There seems to be a bug in move_byte_fwd_ev_glue */
-> 					src = (src - gvi_pc_low_regen)*2 + gvi_pc_low_regen;
-> 					(*temp_func)(dest, src, len, 0);
 > 					break;
-> #endif /* C_VID */
 > 			}
 > 			break;
 > #endif /* EGG */
@@ -402,7 +438,12 @@
 > 				c_sas_store(dest + offset, phy_r8(src + offset));
 > 			}
 > 			break;
-1016a1306,1312
+1015a1340,1343
+> 	SAS_MEM_TYPE src_type;
+> #ifdef EGG
+> 	sys_addr dest_phy;
+> #endif
+1016a1345,1351
 > 	if (getPG())
 > 	{
 > 		if (!xtrn2phy(src, bios_read_accreq(), &src))
@@ -410,12 +451,39 @@
 > 	}
 > 
 > 	src &= SasWrapMask;
-1018,1019c1314,1370
+1018,1019c1353,1431
 < 	for (offset = 0; offset < len; offset += 2) {
 < 		c_sas_storew(dest + offset, c_sas_w_at(src + offset));
 ---
-> 	
-> 	switch (readSelfMod(src, len)) {
+> 	src_type = readSelfMod(src, len);
+> 
+> #ifdef EGG
+> 	/*
+> 	 * VIDEO destination: per-word read+write loop. c_sas_storew dispatches
+> 	 * through the cvidc word-write handler (UCWWRTF / chain-mode variants)
+> 	 * which is NOT equivalent to two byte writes in chain-2 / Mode-X
+> 	 * (see C2MXWWRTF in sevid000.h - second byte goes to +3, not +1) and
+> 	 * has different mark-tracking shape in unchained EGA modes.
+> 	 *
+> 	 * For VIDEO src this also gives correct latch-load semantics via
+> 	 * phy_r16. Replaces the buggy bulk VIDEO->VIDEO dispatch below.
+> 	 */
+> 	dest_phy = dest;
+> 	if (getPG())
+> 	{
+> 		if (!xtrn2phy(dest, bios_read_accreq() | PG_W, &dest_phy))
+> 			return;
+> 	}
+> 	if (readSelfMod(dest_phy & SasWrapMask, len) == SAS_VIDEO)
+> 	{
+> 		for (offset = 0; offset < len; offset += 2) {
+> 			c_sas_storew(dest + offset, phy_r16(src + offset));
+> 		}
+> 		return;
+> 	}
+> #endif /* EGG */
+> 
+> 	switch (src_type) {
 > 		case SAS_MM_LIM:
 > 		case SAS_RAM:
 > 		case SAS_ROM:
@@ -425,6 +493,7 @@
 > 
 > #ifdef	EGG
 > 		case SAS_VIDEO:
+> 			/* VIDEO source, non-VIDEO dest (VIDEO dest handled above). */
 > 			if (getPG())
 > 			{
 > 				if (!xtrn2phy(dest, bios_read_accreq() | PG_W, &dest))
@@ -454,13 +523,7 @@
 > 				default:
 > 					printf("Unknown Sas type\n");
 > 					force_yoda();
-> 
-> #ifdef C_VID
-> 				case SAS_VIDEO:	/* Video -> Video */
-> 					temp_func = read_w_move_ptrs(SAS_VIDEO);
-> 					(*temp_func)(dest, src, len/2, 0);
 > 					break;
-> #endif /* C_VID */
 > 			}
 > 			break;
 > #endif /* EGG */
@@ -471,7 +534,12 @@
 > 				c_sas_storew(dest + offset, phy_r16(src + offset));
 > 			}
 > 			break;
-1029a1381,1387
+1028a1441,1444
+> 	SAS_MEM_TYPE src_type;
+> #ifdef EGG
+> 	sys_addr dest_phy;
+> #endif
+1029a1446,1452
 > 	if (getPG())
 > 	{
 > 		if (!xtrn2phy(src, bios_read_accreq(), &src))
@@ -479,12 +547,35 @@
 > 	}
 > 
 > 	src &= SasWrapMask;
-1031,1032c1389,1444
+1031,1032c1454,1528
 < 	for (offset = 0; offset < len; offset += 4) {
 < 		c_sas_storedw(dest + offset, c_sas_dw_at(src + offset));
 ---
-> 	
-> 	switch (readSelfMod(src, len)) {
+> 	src_type = readSelfMod(src, len);
+> 
+> #ifdef EGG
+> 	/*
+> 	 * VIDEO destination: per-dword loop via c_sas_storedw (which routes
+> 	 * to bios_write_double -> cvidc dword write). Matches per-instruction
+> 	 * REP MOVSD semantics for VIDEO; works for both RAM and VIDEO src
+> 	 * (phy_r32 dispatches correctly via cvidc dword read with latches).
+> 	 */
+> 	dest_phy = dest;
+> 	if (getPG())
+> 	{
+> 		if (!xtrn2phy(dest, bios_read_accreq() | PG_W, &dest_phy))
+> 			return;
+> 	}
+> 	if (readSelfMod(dest_phy & SasWrapMask, len) == SAS_VIDEO)
+> 	{
+> 		for (offset = 0; offset < len; offset += 4) {
+> 			c_sas_storedw(dest + offset, phy_r32(src + offset));
+> 		}
+> 		return;
+> 	}
+> #endif /* EGG */
+> 
+> 	switch (src_type) {
 > 		case SAS_MM_LIM:
 > 		case SAS_RAM:
 > 		case SAS_ROM:
@@ -494,6 +585,7 @@
 > 
 > #ifdef	EGG
 > 		case SAS_VIDEO:
+> 			/* VIDEO source, non-VIDEO dest (VIDEO dest handled above). */
 > 			if (getPG())
 > 			{
 > 				if (!xtrn2phy(dest, bios_read_accreq() | PG_W, &dest))
@@ -523,12 +615,7 @@
 > 				default:
 > 					printf("Unknown Sas type\n");
 > 					force_yoda();
-> 
-> #ifdef C_VID
-> 				case SAS_VIDEO:	/* Video -> Video */
-> 					move_dword_fwd_ev_glue(dest, src, len/4, 0);
 > 					break;
-> #endif /* C_VID */
 > 			}
 > 			break;
 > #endif /* EGG */
@@ -539,7 +626,7 @@
 > 				c_sas_storedw(dest + offset, phy_r32(src + offset));
 > 			}
 > 			break;
-1068a1481,1518
+1068a1565,1602
 > #ifndef BACK_M
 > 	SAS_MEM_TYPE temp_val;
 > 
@@ -578,9 +665,9 @@
 > 			break;
 > 	}
 > #else /* BACK_M */
-1082a1533
+1082a1617
 > #endif
-1089a1541,1581
+1089a1625,1665
 > #ifndef BACK_M
 > 	LIN_ADDR i;
 > 	SAS_MEM_TYPE temp_val;
@@ -622,9 +709,9 @@
 > 			break;
 > 	}
 > #else /* BACK_M */
-1103a1596
+1103a1680
 > #endif
-1111,1114c1604,1617
+1111,1114c1688,1701
 <    /*
 <     * This is a linear address op, so just call the double word operation
 <     * lots of times.
@@ -644,7 +731,7 @@
 > 			return;
 > 	}
 > 	dest &= SasWrapMask;
-1115a1619,1655
+1115a1703,1739
 > 	switch (temp_val = readSelfMod(dest, len<<2)) {
 > 		case SAS_RAM:
 > 			for (i=0, dst=(IU32*)getPtrToPhysAddrByte(dest); i<len; i++)
@@ -682,22 +769,22 @@
 > 			break;
 > 	}
 > #else /* BACK_M */
-1124a1665
+1124a1749
 > #endif
-1203a1745
+1203a1829
 > #if !defined(i386) || defined(BACK_M)
-1232a1775
+1232a1859
 > #endif
-1555,1557c2098,2099
+1555,1557c2182,2183
 < /* Read byte from memory, if V86 Mode let CPU do it. */
 < LOCAL IU8 
 < bios_read_byte IFN1(LIN_ADDR, linAddr)
 ---
 > LOCAL IUM8 
 > bios_read_accreq(void)
-1559d2100
+1559d2184
 < 	PHY_ADDR phyAddr;
-1563,1569d2103
+1563,1569d2187
 < 
 < 	/* If no paging on, then no problem */
 < 
@@ -705,7 +792,7 @@
 < 	{
 < 		return(phy_r8((PHY_ADDR)linAddr));
 < 	}
-1591a2126,2145
+1591a2210,2229
 > 	return access_request;
 > }
 > 
@@ -726,15 +813,15 @@
 > 		return(phy_r8((PHY_ADDR)linAddr));
 > 	}
 > 
-1594c2148
+1594c2232
 < 	if (xtrn2phy(linAddr, access_request, &phyAddr))
 ---
 > 	if (xtrn2phy(linAddr, bios_read_accreq(), &phyAddr))
-1606c2160
+1606c2244
 < 			return;
 ---
 > 			return 0;
-1636,1656d2189
+1636,1656d2273
 < 	/* Note default access_request (0) is Supervisor Read */
 < 
 < 	/* We don't specifically disallow Protected Mode calls, they
@@ -756,15 +843,15 @@
 < 		access_request = access_request | 0x4;
 < 	}
 < 
-1659c2192
+1659c2276
 < 	if (xtrn2phy(linAddr, access_request, &phyAddr))
 ---
 > 	if (xtrn2phy(linAddr, bios_read_accreq(), &phyAddr))
-1671c2204
+1671c2288
 < 			return;
 ---
 > 			return 0;
-1700,1720d2232
+1700,1720d2316
 < 	/* Note default access_request (0) is Supervisor Read */
 < 
 < 	/* We don't specifically disallow Protected Mode calls, they
@@ -786,15 +873,15 @@
 < 		access_request = access_request | 0x4;
 < 	}
 < 
-1723c2235
+1723c2319
 < 	if (xtrn2phy(linAddr, access_request, &phyAddr))
 ---
 > 	if (xtrn2phy(linAddr, bios_read_accreq(), &phyAddr))
-1735c2247
+1735c2331
 < 			return;
 ---
 > 			return 0;
-1765,1784d2276
+1765,1784d2360
 < 	/* Note default access_request (0) is Supervisor Read */
 < 	access_request = access_request | PG_W;   /* So make it Right :-) */
 < 	
@@ -815,11 +902,11 @@
 < 		access_request = access_request | 0x4;
 < 	}
 < 	
-1786c2278
+1786c2362
 < 	if (xtrn2phy(linAddr, access_request, &addr))
 ---
 > 	if (xtrn2phy(linAddr, bios_read_accreq() | PG_W, &addr))
-1829,1836d2320
+1829,1836d2404
 < 	/* Note default access_request (0) is Supervisor Read */
 < 	access_request = access_request | PG_W;   /* So make it Right :-) */
 < 	
@@ -828,7 +915,7 @@
 < 	   requests more leniently than V86 Mode requests, by not insisting
 < 	   that the access and dirty bits are kosher.
 < 	 */
-1838,1848d2321
+1838,1848d2405
 < 	if ( getCPL() != 3 )
 < 	{
 < 		access_request = access_request | PG_U;
@@ -840,11 +927,11 @@
 < 		access_request = access_request | 0x4;
 < 	}
 < 	
-1850c2323
+1850c2407
 < 	if (xtrn2phy(linAddr, access_request, &addr))
 ---
 > 	if (xtrn2phy(linAddr, bios_read_accreq() | PG_W, &addr))
-1893,1912d2365
+1893,1912d2449
 < 	/* Note default access_request (0) is Supervisor Read */
 < 	access_request = access_request | PG_W;   /* So make it Right :-) */
 < 	
@@ -865,7 +952,7 @@
 < 		access_request = access_request | 0x4;
 < 	}
 < 	
-1914c2367
+1914c2451
 < 	if (xtrn2phy(linAddr, access_request, &addr))
 ---
 > 	if (xtrn2phy(linAddr, bios_read_accreq() | PG_W, &addr))

@@ -1420,6 +1420,10 @@ Return Value:
 --*/
 {
 	sys_addr i;
+	SAS_MEM_TYPE src_type;
+#ifdef EGG
+	sys_addr dest_phy;
+#endif
 
 	if (getPG())
 	{
@@ -1428,8 +1432,38 @@ Return Value:
 	}
 
 	Source &= SasWrapMask;
-	
-	switch (readSelfMod(Source, Length)) {
+	src_type = readSelfMod(Source, Length);
+
+#ifdef EGG
+	/*
+	 * VIDEO destination: per-byte read+write loop. Mirrors the per-instruction
+	 * REP MOVSB exactly — sas_PR8 dispatches VIDEO src through the cvidc byte
+	 * read handler (loads latches), sas_store dispatches VIDEO dst through the
+	 * cvidc byte write handler (correct mark_byte, correct plane distribution
+	 * in all chain modes).
+	 *
+	 * Replaces the buggy bulk VIDEO -> VIDEO move below (the (Source-base)*2+base
+	 * hack documented in the original comment) and gives RAM→VIDEO byte ops
+	 * the proper per-element dispatch instead of a raw-byte sas_stores loop.
+	 *
+	 * Skipping CPU decode/commit overhead still wins from fast_rep_movs.
+	 */
+	dest_phy = Destination;
+	if (getPG())
+	{
+		if (!xtrn2phy(Destination, bios_read_accreq() | PG_W, &dest_phy))
+			return;
+	}
+	if (readSelfMod(dest_phy & SasWrapMask, Length) == SAS_VIDEO)
+	{
+		for (i = 0; i < Length; i++) {
+			sas_store(Destination + i, sas_PR8(Source + i));
+		}
+		return;
+	}
+#endif /* EGG */
+
+	switch (src_type) {
 		case SAS_MM_LIM:
 		case SAS_RAM:
 		case SAS_ROM:
@@ -1439,6 +1473,7 @@ Return Value:
 
 #ifdef	EGG
 		case SAS_VIDEO:
+			/* VIDEO source, non-VIDEO dest (VIDEO dest handled above). */
 			if (getPG())
 			{
 				if (!xtrn2phy(Destination, bios_read_accreq() | PG_W, &Destination))
@@ -1468,22 +1503,7 @@ Return Value:
 				default:
 					printf("Unknown Sas type\n");
 					force_yoda();
-
-#ifdef C_VID
-				case SAS_VIDEO:	/* Video -> Video */
-					temp_func = read_b_move_ptrs(SAS_VIDEO);
-					/* There seems to be a bug in move_byte_fwd_ev_glue in CVIDC.
-					 * It assumed that source is a 2cell video area and dest is 4-cell
-					 * If you check ega_copy_move, there 4byte->4byte is assumed.
-					 * So we compensate for it: */
-					Source = (Source - gvi_pc_low_regen)*2 + gvi_pc_low_regen;
-					(*temp_func)(Destination, Source, Length, 0);
-#if VIDEO_STRATEGY == 1
-					RtlCopyMemory(getPtrToPhysAddrByte(Destination), getPtrToPhysAddrByte(Source), Length);
-					RtlCopyMemory(haxm_videocmp_copy + Destination - gvi_pc_low_regen, getPtrToPhysAddrByte(Source), Length);
-#endif
 					break;
-#endif /* C_VID */
 			}
 			break;
 #endif /* EGG */
@@ -1523,6 +1543,10 @@ Return Value:
 --*/
 {
 	sys_addr i;
+	SAS_MEM_TYPE src_type;
+#ifdef EGG
+	sys_addr dest_phy;
+#endif
 
 	if (getPG())
 	{
@@ -1532,8 +1556,33 @@ Return Value:
 
 	Source &= SasWrapMask;
 	Length <<= 1;
-	
-	switch (readSelfMod(Source, Length)) {
+	src_type = readSelfMod(Source, Length);
+
+#ifdef EGG
+	/*
+	 * VIDEO destination: per-word read+write loop. sas_storew dispatches
+	 * through the cvidc word-write handler (UCWWRTF / chain-mode variants);
+	 * NOT equivalent to two byte writes in chain-2 / Mode-X (see C2MXWWRTF
+	 * in sevid000.h — second byte goes to +3, not +1). Also gives correct
+	 * latch-load semantics for VIDEO src via sas_PR16. Replaces the buggy
+	 * bulk VIDEO -> VIDEO dispatch below.
+	 */
+	dest_phy = Destination;
+	if (getPG())
+	{
+		if (!xtrn2phy(Destination, bios_read_accreq() | PG_W, &dest_phy))
+			return;
+	}
+	if (readSelfMod(dest_phy & SasWrapMask, Length) == SAS_VIDEO)
+	{
+		for (i = 0; i < Length; i += 2) {
+			sas_storew(Destination + i, sas_PR16(Source + i));
+		}
+		return;
+	}
+#endif /* EGG */
+
+	switch (src_type) {
 		case SAS_MM_LIM:
 		case SAS_RAM:
 		case SAS_ROM:
@@ -1543,6 +1592,7 @@ Return Value:
 
 #ifdef	EGG
 		case SAS_VIDEO:
+			/* VIDEO source, non-VIDEO dest (VIDEO dest handled above). */
 			if (getPG())
 			{
 				if (!xtrn2phy(Destination, bios_read_accreq() | PG_W, &Destination))
@@ -1572,18 +1622,7 @@ Return Value:
 				default:
 					printf("Unknown Sas type\n");
 					force_yoda();
-
-#ifdef C_VID
-				case SAS_VIDEO:	/* Video -> Video */
-					temp_func = read_w_move_ptrs(SAS_VIDEO);
-					(*temp_func)(Destination, Source, Length/2, 0);
-#if VIDEO_STRATEGY == 1
-					RtlCopyMemory(getPtrToPhysAddrByte(Destination), getPtrToPhysAddrByte(Source), Length);
-					RtlCopyMemory(haxm_videocmp_copy + Destination - gvi_pc_low_regen, getPtrToPhysAddrByte(Source), Length);
-
-#endif
 					break;
-#endif /* C_VID */
 			}
 			break;
 #endif /* EGG */
@@ -1623,6 +1662,10 @@ Return Value:
 --*/
 {
 	sys_addr i;
+	SAS_MEM_TYPE src_type;
+#ifdef EGG
+	sys_addr dest_phy;
+#endif
 
 	if (getPG())
 	{
@@ -1632,8 +1675,30 @@ Return Value:
 
 	Source &= SasWrapMask;
 	Length <<= 2;
-	
-	switch (readSelfMod(Source, Length)) {
+	src_type = readSelfMod(Source, Length);
+
+#ifdef EGG
+	/*
+	 * VIDEO destination: per-dword read+write loop via sas_storedw (routes
+	 * to bios_write_double -> cvidc dword write). Matches per-instruction
+	 * REP MOVSD semantics for VIDEO; works for both RAM and VIDEO src.
+	 */
+	dest_phy = Destination;
+	if (getPG())
+	{
+		if (!xtrn2phy(Destination, bios_read_accreq() | PG_W, &dest_phy))
+			return;
+	}
+	if (readSelfMod(dest_phy & SasWrapMask, Length) == SAS_VIDEO)
+	{
+		for (i = 0; i < Length; i += 4) {
+			sas_storedw(Destination + i, sas_PR32(Source + i));
+		}
+		return;
+	}
+#endif /* EGG */
+
+	switch (src_type) {
 		case SAS_MM_LIM:
 		case SAS_RAM:
 		case SAS_ROM:
@@ -1643,6 +1708,7 @@ Return Value:
 
 #ifdef	EGG
 		case SAS_VIDEO:
+			/* VIDEO source, non-VIDEO dest (VIDEO dest handled above). */
 			if (getPG())
 			{
 				if (!xtrn2phy(Destination, bios_read_accreq() | PG_W, &Destination))
@@ -1672,16 +1738,7 @@ Return Value:
 				default:
 					printf("Unknown Sas type\n");
 					force_yoda();
-
-#ifdef C_VID
-				case SAS_VIDEO:	/* Video -> Video */
-					move_dword_fwd_ev_glue(Destination, Source, Length/4, 0);
-#if VIDEO_STRATEGY == 1
-					RtlCopyMemory(getPtrToPhysAddrByte(Destination), getPtrToPhysAddrByte(Source), Length);
-					RtlCopyMemory(haxm_videocmp_copy + Destination - gvi_pc_low_regen, getPtrToPhysAddrByte(Source), Length);
-#endif
 					break;
-#endif /* C_VID */
 			}
 			break;
 #endif /* EGG */
@@ -2631,8 +2688,29 @@ GLOBAL void
 sas_PRWS IFN3(PHY_ADDR, Source, PHY_ADDR, Destination, PHY_ADDR, Length)
 {
 	sys_addr i;
+	SAS_MEM_TYPE src_type;
 
-	switch (readSelfMod(Source, Length)) {
+	src_type = readSelfMod(Source, Length);
+
+#ifdef EGG
+	/*
+	 * VIDEO destination: per-byte read+write loop. Same correctness
+	 * argument as in sas_move_bytes_forward — bulk VIDEO -> VIDEO path
+	 * mishandles latch semantics and plane distribution, and bulk
+	 * RAM -> VIDEO via sas_PWS doesn't go through cvidc byte dispatch.
+	 * Per-element via sas_PR8 + sas_PW8 mirrors the per-instruction
+	 * REP MOVSB write semantics.
+	 */
+	if (readSelfMod(Destination, Length) == SAS_VIDEO)
+	{
+		for (i = 0; i < Length; i++) {
+			sas_PW8(Destination + i, sas_PR8(Source + i));
+		}
+		return;
+	}
+#endif /* EGG */
+
+	switch (src_type) {
 		case SAS_MM_LIM:
 		case SAS_RAM:
 		case SAS_ROM:
@@ -2642,6 +2720,7 @@ sas_PRWS IFN3(PHY_ADDR, Source, PHY_ADDR, Destination, PHY_ADDR, Length)
 
 #ifdef	EGG
 		case SAS_VIDEO:
+			/* VIDEO source, non-VIDEO dest (VIDEO dest handled above). */
 			switch (readSelfMod(Destination, Length)) {
 				case SAS_RAM:	/* Video -> RAM */
 					temp_func = read_pointers.str_read;
@@ -2664,17 +2743,7 @@ sas_PRWS IFN3(PHY_ADDR, Source, PHY_ADDR, Destination, PHY_ADDR, Length)
 				default:
 					printf("Unknown Sas type\n");
 					force_yoda();
-
-#ifdef C_VID
-				case SAS_VIDEO:	/* Video -> Video */
-					temp_func = read_b_move_ptrs(SAS_VIDEO);
-					(*temp_func) (Destination, Source, Length, 0);
-#if VIDEO_STRATEGY == 1
-					memmove(getPtrToPhysAddrByte(Destination), getPtrToPhysAddrByte(Source), Length);
-					memmove(haxm_videocmp_copy + Destination - gvi_pc_low_regen, haxm_videocmp_copy + Source - gvi_pc_low_regen, Length);
-#endif
 					break;
-#endif /* C_VID */
 			}
 			break;
 #endif /* EGG */

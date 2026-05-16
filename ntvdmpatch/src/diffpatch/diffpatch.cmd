@@ -8,7 +8,7 @@ set PATH=%PATH%;%ProgramW6432%\git\usr\bin
 
 rem
 rem Set to directory where current patches are located
-set PATCHROOT=f:\Windows.Source.Code.w2k.nt4.wxp\ntvdmpatch\ntvdmpatch
+set PATCHROOT=f:\Windows.Source.Code.w2k.nt4.wxp\ntvdmpatch.git\ntvdmpatch
 
 rem
 rem Set to path where original unpatched MINNT source is located
@@ -67,6 +67,9 @@ for /r %%f in (*) do (
     if errorlevel 1 (
        set "B=!B:\=/%!"
        find /i "!B!" %%I >nul
+       if errorlevel 1 (
+         if "%%~nxI"=="%PATFILE%" @(call )
+       )
     )
     if not errorlevel 1 (
       set /A n+=1

@@ -3,5 +3,5 @@
 51a52,53
 > #include <gmi.h>
 > #include <gfx_upd.h>
-505a508
+616a619
 > 				host_graphics_tick(); \

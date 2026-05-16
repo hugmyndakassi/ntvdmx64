@@ -190,7 +190,7 @@
 > #if !defined(i386) || !defined(MONITOR)
 --- NT4\private\mvdm\softpc.new\base\ccpu386\c_main.c
 +++ nt\private\mvdm\softpc.new\base\ccpu386\c_main.c
-4416a4417
+4654a4655
 > 	 if(!(GET_PE() && host_hwint_hook((IS32) cpu_hw_interrupt_number)))
 --- NT4\private\mvdm\dpmi32\dpmimemr.c
 +++ nt\private\mvdm\dpmi32\dpmimemr.c

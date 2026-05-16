@@ -1,0 +1,253 @@
+﻿--- NT4\private\mvdm\softpc.new\base\ccpu386\c_main.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\c_main.c
+267a268,374
+>    Fast paths for REP MOVS{B,W,D} and REP STOS{B,W,D} (DF=0): per-chunk
+>    bulk move/fill through the SAS layer instead of element-by-element.
+>    Returns the number of *elements* actually moved/filled in this call --
+>    caller loops until rep_count is exhausted or we return 0 (bail to the
+>    existing slow loop). Each call is capped to one host page on each side
+>    so that limit_check / usr_chk_byte / SAS type dispatch each run once
+>    per ~4KB instead of per element.
+> 
+>    c_sas_move_*_forward / c_sas_fills* already handle SAS_RAM/SAS_ROM/
+>    SAS_VIDEO/SAS_MM_LIM dispatch internally (memcpy/memset for RAM,
+>    video-dirty path for VIDEO, ROM-write suppression, etc.), so non-RAM
+>    regions are still semantically correct.
+> 
+>    Portable C -- works on all hosts (i386/Alpha/MIPS/PPC).
+>  */
+> LOCAL IU32
+> fast_rep_movs
+> IFN6(
+>    ISM32, src_seg_idx,
+>    IU32,  src_off,
+>    IU32,  dst_off,
+>    IU32,  count,	/* in *elements* */
+>    IU32,  elem_size,	/* 1, 2, or 4 */
+>    IBOOL, use32
+> )
+> {
+>    IU32 src_la = GET_SR_BASE(src_seg_idx) + src_off;
+>    IU32 dst_la = GET_SR_BASE(ES_REG)      + dst_off;
+>    IU32 src_page_left = 0x1000 - (src_la & 0xfff);
+>    IU32 dst_page_left = 0x1000 - (dst_la & 0xfff);
+>    IU32 chunk = count;
+>    IU32 page_max;
+> 
+>    /*
+>       Page-cap in elements (page_left / elem_size). Integer-divide guarantees
+>       no element straddles a page boundary -- the last byte of the last
+>       element is at offset <= 4095 within the page, so a single
+>       usr_chk_byte at the start covers the whole chunk.
+>     */
+>    page_max = src_page_left / elem_size;
+>    if ( chunk > page_max ) chunk = page_max;
+>    page_max = dst_page_left / elem_size;
+>    if ( chunk > page_max ) chunk = page_max;
+> 
+>    if ( !use32 )
+>       {
+>       /* USE16: never run a chunk past the 64K offset wrap. */
+>       IU32 src_seg_left = (0x10000 - src_off) / elem_size;
+>       IU32 dst_seg_left = (0x10000 - dst_off) / elem_size;
+>       if ( chunk > src_seg_left ) chunk = src_seg_left;
+>       if ( chunk > dst_seg_left ) chunk = dst_seg_left;
+>       }
+>    if ( chunk == 0 ) return 0;
+> 
+>    /* One limit_check for the whole chunk (replaces N per-element checks). */
+>    limit_check(src_seg_idx, src_off, (INT)chunk, (INT)elem_size);
+>    limit_check(ES_REG,      dst_off, (INT)chunk, (INT)elem_size);
+> 
+>    /* Trigger #PF if either page is unmapped/wrong-permissioned. */
+>    (void)usr_chk_byte(src_la, PG_R);
+>    (void)usr_chk_byte(dst_la, PG_W);
+> 
+>    switch ( elem_size )
+>       {
+>    case 1: c_sas_move_bytes_forward  (src_la, dst_la, chunk); break;
+>    case 2: c_sas_move_words_forward  (src_la, dst_la, chunk); break;
+>    case 4: c_sas_move_doubles_forward(src_la, dst_la, chunk); break;
+>       }
+>    return chunk;
+> }
+> 
+> LOCAL IU32
+> fast_rep_stos
+> IFN5(
+>    IU32,  dst_off,
+>    IU32,  count,	/* in *elements* */
+>    IU32,  elem_size,	/* 1, 2, or 4 */
+>    IU32,  val,		/* AL / AX / EAX (zero-extended) */
+>    IBOOL, use32
+> )
+> {
+>    IU32 dst_la = GET_SR_BASE(ES_REG) + dst_off;
+>    IU32 dst_page_left = 0x1000 - (dst_la & 0xfff);
+>    IU32 chunk = count;
+>    IU32 page_max = dst_page_left / elem_size;
+> 
+>    if ( chunk > page_max ) chunk = page_max;
+>    if ( !use32 )
+>       {
+>       IU32 dst_seg_left = (0x10000 - dst_off) / elem_size;
+>       if ( chunk > dst_seg_left ) chunk = dst_seg_left;
+>       }
+>    if ( chunk == 0 ) return 0;
+> 
+>    limit_check(ES_REG, dst_off, (INT)chunk, (INT)elem_size);
+>    (void)usr_chk_byte(dst_la, PG_W);
+> 
+>    switch ( elem_size )
+>       {
+>    case 1: c_sas_fills  (dst_la, (IU8) val, chunk); break;
+>    case 2: c_sas_fillsw (dst_la, (IU16)val, chunk); break;
+>    case 4: c_sas_fillsdw(dst_la,       val, chunk); break;
+>       }
+>    return chunk;
+> }
+> 
+> /*
+393c500
+< GLOBAL IU32 CCPU_FLAGS[32];	/* The flags. (EFLAGS) */
+---
+> GLOBAL IU32 CCPU_FLAGS[32];	/* The flags. (EFLAGS) — IU32-per-bit on RISC. */
+2914a3022,3058
+>       /*
+> 	 Fast path: DF=0 with a real repeat -> page-sized chunks through
+> 	 fast_rep_movs (calls c_sas_move_bytes_forward, which dispatches
+> 	 RAM/ROM/VIDEO/LIM correctly). Any oddity (DF=1, 16-bit wrap,
+> 	 anything the helper declines) drops to the per-byte slow loop.
+>        */
+>       if ( !GET_DF() && rep_count > 1 )
+> 	 {
+> 	 IBOOL use32 = (IBOOL)(GET_ADDRESS_SIZE() != USE16);
+> 	 IU32 src_off = use32 ? GET_ESI() : GET_SI();
+> 	 IU32 dst_off = use32 ? GET_EDI() : GET_DI();
+> 	 ISM32 src_seg_idx = (segment_override == SEG_CLR)
+> 				? DS_REG : segment_override;
+> 	 while ( rep_count > 0 )
+> 	    {
+> 	    IU32 done = fast_rep_movs(src_seg_idx, src_off, dst_off,
+> 				      rep_count, (IU32)1, use32);
+> 	    if ( done == 0 ) break;
+> 	    src_off += done;
+> 	    dst_off += done;
+> 	    rep_count -= done;
+> 	    if ( use32 )
+> 	       {
+> 	       SET_ESI(src_off);
+> 	       SET_EDI(dst_off);
+> 	       if ( repeat != REP_CLR ) SET_ECX(rep_count);
+> 	       }
+> 	    else
+> 	       {
+> 	       SET_SI((IU16)src_off);
+> 	       SET_DI((IU16)dst_off);
+> 	       if ( repeat != REP_CLR ) SET_CX((IU16)rep_count);
+> 	       if ( src_off >= 0x10000 || dst_off >= 0x10000 ) break;
+> 	       }
+> 	    }
+> 	 }
+> 
+2929c3073
+<    case 0xa5:   /* T4 MOVSW Yv Xv */
+---
+>    case 0xa5:   /* T4 MOVSW Yv Xv  (or MOVSD when OPERAND_SIZE == USE32) */
+2931a3076,3110
+>       /* Fast path: bulk move through SAS, elem_size from operand-size. */
+>       if ( !GET_DF() && rep_count > 1 )
+> 	 {
+> 	 IBOOL use32 = (IBOOL)(GET_ADDRESS_SIZE() != USE16);
+> 	 IU32 elem_size = (GET_OPERAND_SIZE() == USE16) ? 2 : 4;
+> 	 IU32 src_off = use32 ? GET_ESI() : GET_SI();
+> 	 IU32 dst_off = use32 ? GET_EDI() : GET_DI();
+> 	 ISM32 src_seg_idx = (segment_override == SEG_CLR)
+> 				? DS_REG : segment_override;
+> 	 while ( rep_count > 0 )
+> 	    {
+> 	    IU32 done = fast_rep_movs(src_seg_idx, src_off, dst_off,
+> 				      rep_count, elem_size, use32);
+> 	    IU32 done_bytes;
+> 	    if ( done == 0 ) break;
+> 	    done_bytes = done * elem_size;
+> 	    src_off += done_bytes;
+> 	    dst_off += done_bytes;
+> 	    rep_count -= done;
+> 	    if ( use32 )
+> 	       {
+> 	       SET_ESI(src_off);
+> 	       SET_EDI(dst_off);
+> 	       if ( repeat != REP_CLR ) SET_ECX(rep_count);
+> 	       }
+> 	    else
+> 	       {
+> 	       SET_SI((IU16)src_off);
+> 	       SET_DI((IU16)dst_off);
+> 	       if ( repeat != REP_CLR ) SET_CX((IU16)rep_count);
+> 	       if ( src_off >= 0x10000 || dst_off >= 0x10000 ) break;
+> 	       }
+> 	    }
+> 	 }
+> 
+3037a3217,3242
+>       /* Fast path: bulk fill via c_sas_fills (SAS-type-aware). */
+>       if ( !GET_DF() && rep_count > 1 )
+> 	 {
+> 	 IBOOL use32 = (IBOOL)(GET_ADDRESS_SIZE() != USE16);
+> 	 IU32 dst_off = use32 ? GET_EDI() : GET_DI();
+> 	 IU32 val = (IU32)GET_AL();
+> 	 while ( rep_count > 0 )
+> 	    {
+> 	    IU32 done = fast_rep_stos(dst_off, rep_count, (IU32)1, val, use32);
+> 	    if ( done == 0 ) break;
+> 	    dst_off += done;
+> 	    rep_count -= done;
+> 	    if ( use32 )
+> 	       {
+> 	       SET_EDI(dst_off);
+> 	       if ( repeat != REP_CLR ) SET_ECX(rep_count);
+> 	       }
+> 	    else
+> 	       {
+> 	       SET_DI((IU16)dst_off);
+> 	       if ( repeat != REP_CLR ) SET_CX((IU16)rep_count);
+> 	       if ( dst_off >= 0x10000 ) break;
+> 	       }
+> 	    }
+> 	 }
+> 
+3049c3254
+<    case 0xab:   /* T4 STOSW Yv F(e)ax */
+---
+>    case 0xab:   /* T4 STOSW Yv F(e)ax  (or STOSD when OPERAND_SIZE == USE32) */
+3050a3256,3284
+> 
+>       /* Fast path: bulk fill via c_sas_fillsw / c_sas_fillsdw. */
+>       if ( !GET_DF() && rep_count > 1 )
+> 	 {
+> 	 IBOOL use32 = (IBOOL)(GET_ADDRESS_SIZE() != USE16);
+> 	 IU32 elem_size = (GET_OPERAND_SIZE() == USE16) ? 2 : 4;
+> 	 IU32 dst_off = use32 ? GET_EDI() : GET_DI();
+> 	 IU32 val = (elem_size == 2) ? (IU32)GET_AX() : GET_EAX();
+> 	 while ( rep_count > 0 )
+> 	    {
+> 	    IU32 done = fast_rep_stos(dst_off, rep_count, elem_size, val, use32);
+> 	    IU32 done_bytes;
+> 	    if ( done == 0 ) break;
+> 	    done_bytes = done * elem_size;
+> 	    dst_off += done_bytes;
+> 	    rep_count -= done;
+> 	    if ( use32 )
+> 	       {
+> 	       SET_EDI(dst_off);
+> 	       if ( repeat != REP_CLR ) SET_ECX(rep_count);
+> 	       }
+> 	    else
+> 	       {
+> 	       SET_DI((IU16)dst_off);
+> 	       if ( repeat != REP_CLR ) SET_CX((IU16)rep_count);
+> 	       if ( dst_off >= 0x10000 ) break;
+> 	       }
+> 	    }
+> 	 }

@@ -1,0 +1,277 @@
+--- NT4\private\mvdm\softpc.new\base\ccpu386\adc.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\adc.c
+49,73c49,56
+<    IU32 result;
+<    IU32 carry;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 op2_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+<    					/* Do operation */
+<    result = *pop1 + op2 + GET_CF() & SZ2MASK(op_sz);
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    op2_msb = (op2    & msb) != 0;
+<    res_msb = (result & msb) != 0;
+<    carry = *pop1 ^ op2 ^ result;	/* Isolate carries */
+< 					/* Determine flags */
+<    /*
+<       OF = (op1 == op2) & (op2 ^ res)
+<       ie if operand signs same and res sign different set OF.
+<     */
+<    SET_OF((op1_msb == op2_msb) & (op2_msb ^ res_msb));
+<    /*
+<       Formally:-     CF = op1 & op2 | !res & op1 | !res & op2
+<       Equivalently:- CF = OF ^ op1 ^ op2 ^ res
+<     */
+<    SET_CF(((carry & msb) != 0) ^ GET_OF());
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 + op2 + GET_CF()) & SZ2MASK(op_sz);
+>    IU32 carry  = op1 ^ op2 ^ result;
+>    /* OF (add): ((op1 ^ res) & (op2 ^ res) & msb) */
+>    IU32 of_bit = (op1 ^ result) & (op2 ^ result) & msb;
+>    SET_CF(((carry ^ of_bit) & msb) != 0);
+>    SET_OF(of_bit != 0);
+--- NT4\private\mvdm\softpc.new\base\ccpu386\add.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\add.c
+49,63c49,52
+<    IU32 result;
+<    IU32 carry;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 op2_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+<    					/* Do operation */
+<    result = *pop1 + op2 & SZ2MASK(op_sz);
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    op2_msb = (op2    & msb) != 0;
+<    res_msb = (result & msb) != 0;
+<    carry = *pop1 ^ op2 ^ result;	/* Isolate carries */
+< 					/* Determine flags */
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 + op2) & SZ2MASK(op_sz);
+>    IU32 carry  = op1 ^ op2 ^ result;	/* per-bit carry-in */
+65,66c54,55
+<       OF = (op1 == op2) & (op2 ^ res)
+<       ie if operand signs same and res sign different set OF.
+---
+>       OF = signs(op1)==signs(op2) AND signs(op2)!=signs(res)
+>       Bit form: ((op1 ^ res) & (op2 ^ res) & msb)
+68c57
+<    SET_OF((op1_msb == op2_msb) & (op2_msb ^ res_msb));
+---
+>    IU32 of_bit = (op1 ^ result) & (op2 ^ result) & msb;
+70,71c59,60
+<       Formally:-     CF = op1 & op2 | !res & op1 | !res & op2
+<       Equivalently:- CF = OF ^ op1 ^ op2 ^ res
+---
+>       CF = OF ^ (op1 ^ op2 ^ res)_msb  -- same identity as before,
+>       but we use of_bit directly to avoid a CCPU_FLAGS reload.
+73c62,63
+<    SET_CF(((carry & msb) != 0) ^ GET_OF());
+---
+>    SET_CF(((carry ^ of_bit) & msb) != 0);
+>    SET_OF(of_bit != 0);
+--- NT4\private\mvdm\softpc.new\base\ccpu386\cmp.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\cmp.c
+51,76c51,57
+<    IU32 result;
+<    IU32 carry;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 op2_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+< 
+<    result = op1 - op2 & SZ2MASK(op_sz);		/* Do operation */
+<    op1_msb = (op1    & msb) != 0;	/* Isolate all msb's */
+<    op2_msb = (op2    & msb) != 0;
+<    res_msb = (result & msb) != 0;
+<    carry = op1 ^ op2 ^ result;		/* Isolate carries */
+< 					/* Determine flags */
+<    /*
+<       OF = (op1 == !op2) & (op1 ^ res)
+<       ie if operand signs differ and res sign different to original
+<       destination set OF.
+<     */
+<    SET_OF((op1_msb != op2_msb) & (op1_msb ^ res_msb));
+<    /*
+<       Formally:-     CF = !op1 & op2 | res & !op1 | res & op2
+<       Equivalently:- CF = OF ^ op1 ^ op2 ^ res
+<     */
+<    SET_CF(((carry & msb) != 0) ^ GET_OF());
+---
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 - op2) & SZ2MASK(op_sz);
+>    IU32 carry  = op1 ^ op2 ^ result;
+>    /* OF (sub): ((op1 ^ op2) & (op1 ^ res) & msb) */
+>    IU32 of_bit = (op1 ^ op2) & (op1 ^ result) & msb;
+>    SET_CF(((carry ^ of_bit) & msb) != 0);
+>    SET_OF(of_bit != 0);
+--- NT4\private\mvdm\softpc.new\base\ccpu386\dec.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\dec.c
+48,60c48,52
+<    IU32 result;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+< 
+<    result = *pop1 - 1 & SZ2MASK(op_sz);		/* Do operation */
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    res_msb = (result & msb) != 0;
+< 					/* Determine flags */
+<    SET_OF(op1_msb & !res_msb);		/* OF = op1 & !res */
+< 					/* CF left unchanged */
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 - 1) & SZ2MASK(op_sz);
+>    /* OF = op1_msb & !res_msb -- in bit form at msb. CF unchanged. */
+>    SET_OF((op1 & ~result & msb) != 0);
+64c56
+<    SET_AF(((*pop1 ^ result) & BIT4_MASK) != 0);	/* AF = Bit 4 carry */
+---
+>    SET_AF(((op1 ^ result) & BIT4_MASK) != 0);	/* AF = Bit 4 carry */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\inc.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\inc.c
+48,60c48,52
+<    IU32 result;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+< 
+<    result = *pop1 + 1 & SZ2MASK(op_sz);		/* Do operation */
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    res_msb = (result & msb) != 0;
+< 					/* Determine flags */
+<    SET_OF(!op1_msb & res_msb);		/* OF = !op1 & res */
+< 					/* CF left unchanged */
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 + 1) & SZ2MASK(op_sz);
+>    /* OF = !op1_msb & res_msb -- in bit form at msb. CF unchanged. */
+>    SET_OF((~op1 & result & msb) != 0);
+64c56
+<    SET_AF(((*pop1 ^ result) & BIT4_MASK) != 0);	/* AF = Bit 4 carry */
+---
+>    SET_AF(((op1 ^ result) & BIT4_MASK) != 0);	/* AF = Bit 4 carry */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\neg.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\neg.c
+48,60c48,53
+<    IU32 result;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+< 
+<    result = -(*pop1) & SZ2MASK(op_sz);		/* Do operation */
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    res_msb = (result & msb) != 0;
+< 					/* Determine flags */
+<    SET_OF(op1_msb & res_msb);		/* OF = op1 & res */
+<    SET_CF(op1_msb | res_msb);		/* CF = op1 | res */
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (-op1) & SZ2MASK(op_sz);
+>    /* OF = op1_msb & res_msb;  CF = op1_msb | res_msb -- both at msb. */
+>    SET_OF((op1 & result & msb) != 0);
+>    SET_CF(((op1 | result) & msb) != 0);
+64c57
+<    SET_AF(((*pop1 ^ result) & BIT4_MASK) != 0);	/* AF = Bit 4 carry */
+---
+>    SET_AF(((op1 ^ result) & BIT4_MASK) != 0);	/* AF = Bit 4 carry */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\sbb.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\sbb.c
+49,74c49,56
+<    IU32 result;
+<    IU32 carry;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 op2_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+<    					/* Do operation */
+<    result = *pop1 - op2 - GET_CF() & SZ2MASK(op_sz);
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    op2_msb = (op2    & msb) != 0;
+<    res_msb = (result & msb) != 0;
+<    carry = *pop1 ^ op2 ^ result;	/* Isolate carries */
+< 					/* Determine flags */
+<    /*
+<       OF = (op1 == !op2) & (op1 ^ res)
+<       ie if operand signs differ and res sign different to original
+<       destination set OF.
+<     */
+<    SET_OF((op1_msb != op2_msb) & (op1_msb ^ res_msb));
+<    /*
+<       Formally:-     CF = !op1 & op2 | res & !op1 | res & op2
+<       Equivalently:- CF = OF ^ op1 ^ op2 ^ res
+<     */
+<    SET_CF(((carry & msb) != 0) ^ GET_OF());
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 - op2 - GET_CF()) & SZ2MASK(op_sz);
+>    IU32 carry  = op1 ^ op2 ^ result;
+>    /* OF (sub): ((op1 ^ op2) & (op1 ^ res) & msb) */
+>    IU32 of_bit = (op1 ^ op2) & (op1 ^ result) & msb;
+>    SET_CF(((carry ^ of_bit) & msb) != 0);
+>    SET_OF(of_bit != 0);
+--- NT4\private\mvdm\softpc.new\base\ccpu386\sub.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\sub.c
+49,63c49,52
+<    IU32 result;
+<    IU32 carry;
+<    IU32 msb;
+<    IU32 op1_msb;
+<    IU32 op2_msb;
+<    IU32 res_msb;
+< 
+<    msb = SZ2MSB(op_sz);
+< 
+<    result = *pop1 - op2 & SZ2MASK(op_sz);	/* Do operation */
+<    op1_msb = (*pop1  & msb) != 0;	/* Isolate all msb's */
+<    op2_msb = (op2    & msb) != 0;
+<    res_msb = (result & msb) != 0;
+<    carry = *pop1 ^ op2 ^ result;	/* Isolate carries */
+< 					/* Determine flags */
+---
+>    IU32 op1 = *pop1;
+>    IU32 msb = SZ2MSB(op_sz);
+>    IU32 result = (op1 - op2) & SZ2MASK(op_sz);
+>    IU32 carry  = op1 ^ op2 ^ result;	/* per-bit borrow-in */
+65,67c54,55
+<       OF = (op1 == !op2) & (op1 ^ res)
+<       ie if operand signs differ and res sign different to original
+<       destination set OF.
+---
+>       OF = signs(op1)!=signs(op2) AND signs(op1)!=signs(res)
+>       Bit form: ((op1 ^ op2) & (op1 ^ res) & msb)
+69,74c57,60
+<    SET_OF((op1_msb != op2_msb) & (op1_msb ^ res_msb));
+<    /*
+<       Formally:-     CF = !op1 & op2 | res & !op1 | res & op2
+<       Equivalently:- CF = OF ^ op1 ^ op2 ^ res
+<     */
+<    SET_CF(((carry & msb) != 0) ^ GET_OF());
+---
+>    IU32 of_bit = (op1 ^ op2) & (op1 ^ result) & msb;
+>    /* CF = OF ^ (op1 ^ op2 ^ res)_msb  -- use of_bit directly. */
+>    SET_CF(((carry ^ of_bit) & msb) != 0);
+>    SET_OF(of_bit != 0);

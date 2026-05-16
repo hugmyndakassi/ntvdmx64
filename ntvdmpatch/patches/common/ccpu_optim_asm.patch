@@ -1,0 +1,1011 @@
+--- NT4\private\mvdm\softpc.new\base\ccpu386\c_main.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\c_main.c
+389a390,392
+> #ifdef i386
+> GLOBAL IU32 CCPU_FLAGS;		/* Packed EFLAGS (real x86 layout). See c_reg.h. */
+> #else
+390a394
+> #endif
+--- NT4\private\mvdm\softpc.new\base\ccpu386\adc.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\adc.c
+48a49
+> #ifdef i386
+48a56,59
+>    IU32 op1 = *pop1;
+>    IU32 cf_in = GET_CF();
+>    IU32 result;
+>    IU32 host_flags;
+48a61,105
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, b = (IU8)op2, r;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov al, a
+> 	 adc al, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, b = (IU16)op2, r;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov ax, a
+> 	 adc ax, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov eax, op1
+> 	 adc eax, op2
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS(host_flags);
+> #else
+61a119
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\add.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\add.c
+48a49
+> #ifdef i386
+48a57,59
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+48a61,99
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, b = (IU8)op2, r;
+>       __asm {
+> 	 mov al, a
+> 	 add al, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, b = (IU16)op2, r;
+>       __asm {
+> 	 mov ax, a
+> 	 add ax, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov eax, op1
+> 	 add eax, op2
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS(host_flags);
+> #else
+68a120
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\c_reg.h
++++ nt\private\mvdm\softpc.new\base\ccpu386\c_reg.h
+58a59,61
+> #ifdef i386
+> IMPORT IU32	CCPU_FLAGS;	/* packed EFLAGS (real x86 layout) */
+> #else
+59a63
+> #endif
+366a371
+> #ifdef i386
+366a383,396
+> #define GET_CF()	( CCPU_FLAGS        & 1u)
+> #define GET_PF()	((CCPU_FLAGS >>  2) & 1u)
+> #define GET_AF()	((CCPU_FLAGS >>  4) & 1u)
+> #define GET_ZF()	((CCPU_FLAGS >>  6) & 1u)
+> #define GET_SF()	((CCPU_FLAGS >>  7) & 1u)
+> #define GET_TF()	((CCPU_FLAGS >>  8) & 1u)
+> #define GET_IF()	((CCPU_FLAGS >>  9) & 1u)
+> #define GET_DF()	((CCPU_FLAGS >> 10) & 1u)
+> #define GET_OF()	((CCPU_FLAGS >> 11) & 1u)
+> #define GET_IOPL()	((CCPU_FLAGS >> 12) & 3u)
+> #define GET_NT()	((CCPU_FLAGS >> 14) & 1u)
+> #define GET_RF()	((CCPU_FLAGS >> 16) & 1u)
+> #define GET_VM()	((CCPU_FLAGS >> 17) & 1u)
+> #define GET_AC()	((CCPU_FLAGS >> 18) & 1u)
+366a399,401
+> #define _SBIT(bit, x) \
+>    (CCPU_FLAGS = (CCPU_FLAGS & ~(1u << (bit))) \
+>                  | (((IU32)(!!(x))) << (bit)))
+366a403,422
+> #define SET_CF(x)	_SBIT( 0, x)
+> #define SET_PF(x)	_SBIT( 2, x)
+> #define SET_AF(x)	_SBIT( 4, x)
+> #define SET_ZF(x)	_SBIT( 6, x)
+> #define SET_SF(x)	_SBIT( 7, x)
+> #define SET_TF(x)	_SBIT( 8, x)
+> #ifdef SFELLOW
+> extern IU32 DisableEE IPT0();
+> extern void EnableEE IPT0();
+> #define SET_IF(x)	\
+> {			\
+>    if (x) EnableEE();	\
+>    else   DisableEE();	\
+>    _SBIT(9, x);		\
+> }
+> #else
+> #define SET_IF(x)	_SBIT( 9, x)
+> #endif /* SFELLOW */
+> #define SET_DF(x)	_SBIT(10, x)
+> #define SET_OF(x)	_SBIT(11, x)
+366a424,429
+> #define SET_IOPL(x)	\
+>    (CCPU_FLAGS = (CCPU_FLAGS & ~(3u << 12)) | (((IU32)(x) & 3u) << 12))
+> #define SET_NT(x)	_SBIT(14, x)
+> #define SET_RF(x)	_SBIT(16, x)
+> #define SET_VM(x)	_SBIT(17, x)
+> #define SET_AC(x)	_SBIT(18, x)
+366a431
+> #else /* !i386 — historical IU32-per-flag array layout */
+393,400c459,460
+< 	if (x) \
+< 	{ \
+< 		EnableEE(); \
+< 	} \
+< 	else \
+< 	{ \
+< 		DisableEE(); \
+< 	} \
+---
+> 	if (x) { EnableEE();  } \
+> 	else   { DisableEE(); } \
+412a474
+> #endif /* i386 */
+412a477
+> #ifdef i386
+412a486,488
+> #define UNPACK_HOST_ARITH_FLAGS(host_flags)		\
+>    (CCPU_FLAGS = (CCPU_FLAGS & ~((IU32)0x000008D5))	\
+>                  | ((host_flags) & 0x000008D5))
+412a491,493
+> #define UNPACK_HOST_ARITH_FLAGS_NOCF(host_flags)	\
+>    (CCPU_FLAGS = (CCPU_FLAGS & ~((IU32)0x000008D4))	\
+>                  | ((host_flags) & 0x000008D4))
+412a503,512
+> #define UNPACK_HOST_SHIFT_FLAGS(host_flags, count)	\
+>    do {							\
+>       IU32 _hf = (host_flags);				\
+>       if ((count) == 1) {				\
+> 	 CCPU_FLAGS = (CCPU_FLAGS & ~((IU32)0x000008C5)) | (_hf & 0x000008C5); \
+>       } else {						\
+> 	 CCPU_FLAGS = (CCPU_FLAGS & ~((IU32)0x000000C5)) | (_hf & 0x000000C5); \
+> 	 do_multiple_shiftrot_of((ISM32)((_hf >> 11) & 1));		\
+>       }							\
+>    } while (0)
+412a519,521
+> #define UNPACK_HOST_SHIFT_FLAGS_SAR(host_flags)		\
+>    (CCPU_FLAGS = (CCPU_FLAGS & ~((IU32)0x000008C5))	\
+>                  | ((host_flags) & 0x000000C5))
+412a530,540
+> #define UNPACK_HOST_ROTATE_FLAGS(host_flags, count)	\
+>    do {							\
+>       IU32 _hf = (host_flags);				\
+>       if ((count) == 1) {				\
+> 	 CCPU_FLAGS = (CCPU_FLAGS & ~((IU32)0x00000801)) | (_hf & 0x00000801); \
+>       } else {						\
+> 	 CCPU_FLAGS = (CCPU_FLAGS & ~1u) | (_hf & 1u);	\
+> 	 do_multiple_shiftrot_of((ISM32)((_hf >> 11) & 1));		\
+>       }							\
+>    } while (0)
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\cmp.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\cmp.c
+50a51
+> #ifdef i386
+50a53
+>    IU32 host_flags;
+50a55,87
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, b = (IU8)op2;
+>       __asm {
+> 	 mov al, a
+> 	 cmp al, b
+> 	 pushfd
+> 	 pop host_flags
+>       }
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, b = (IU16)op2;
+>       __asm {
+> 	 mov ax, a
+> 	 cmp ax, b
+> 	 pushfd
+> 	 pop host_flags
+>       }
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov eax, op1
+> 	 cmp eax, op2
+> 	 pushfd
+> 	 pop host_flags
+>       }
+>       break;
+>       }
+>    UNPACK_HOST_ARITH_FLAGS(host_flags);
+> #else
+61a99
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\dec.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\dec.c
+47a48
+> #ifdef i386
+47a50,52
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+47a54,92
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       __asm {
+> 	 mov al, a
+> 	 dec al
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       __asm {
+> 	 mov ax, a
+> 	 dec ax
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov eax, op1
+> 	 dec eax
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS_NOCF(host_flags);
+> #else
+57a103
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\inc.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\inc.c
+47a48
+> #ifdef i386
+47a50,52
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+47a54,92
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       __asm {
+> 	 mov al, a
+> 	 inc al
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       __asm {
+> 	 mov ax, a
+> 	 inc ax
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov eax, op1
+> 	 inc eax
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS_NOCF(host_flags);
+> #else
+57a103
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\neg.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\neg.c
+47a48
+> #ifdef i386
+47a50,52
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+47a54,92
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       __asm {
+> 	 mov al, a
+> 	 neg al
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       __asm {
+> 	 mov ax, a
+> 	 neg ax
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov eax, op1
+> 	 neg eax
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS(host_flags);
+> #else
+58a104
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\rcl.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\rcl.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,55
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+>    IU32 cf_in = GET_CF();
+48a57
+>    IU32 host_flags;
+48a59,113
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 rcl al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 rcl ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 rcl eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ROTATE_FLAGS(host_flags, op2);
+>    }
+> #else
+>    {
+>    IU32 result;
+54,55d116
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+91a153,154
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\rcr.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\rcr.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,57
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+>    IU32 cf_in = GET_CF();
+>    IU32 result;
+>    IU32 host_flags;
+47a59,112
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 rcr al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 rcr ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 rcr eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ROTATE_FLAGS(host_flags, op2);
+>    }
+> #else
+>    {
+55,56d117
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+87a149,150
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\rol.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\rol.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,54
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+48a56
+>    IU32 host_flags;
+48a58,106
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 rol al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 rol ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 rol eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ROTATE_FLAGS(host_flags, op2);
+>    }
+> #else
+>    {
+>    IU32 result;
+54,55d110
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+91a146,147
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\ror.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\ror.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,54
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+48a56
+>    IU32 host_flags;
+48a58,106
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 ror al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 ror ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 ror eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ROTATE_FLAGS(host_flags, op2);
+>    }
+> #else
+>    {
+>    IU32 result;
+54,55d109
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+91a146,147
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\sar.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\sar.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,56
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+47a58,108
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 sar al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 sar ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 sar eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_SHIFT_FLAGS_SAR(host_flags);
+> #ifdef SET_UNDEFINED_FLAG
+>    SET_AF(UNDEFINED_FLAG);
+> #endif
+>    }
+> #else
+>    {
+54,55d112
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+82a140,141
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\sbb.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\sbb.c
+48a49,53
+> #ifdef i386
+>    IU32 op1 = *pop1;
+>    IU32 cf_in = GET_CF();
+>    IU32 result;
+>    IU32 host_flags;
+48a55,99
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, b = (IU8)op2, r;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov al, a
+> 	 sbb al, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, b = (IU16)op2, r;
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov ax, a
+> 	 sbb ax, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov edx, cf_in
+> 	 shr edx, 1
+> 	 mov eax, op1
+> 	 sbb eax, op2
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS(host_flags);
+> #else
+61a113
+> #endif /* i386 */
+--- NT4\private\mvdm\softpc.new\base\ccpu386\shl.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\shl.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,54
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+48a56
+>    IU32 host_flags;
+48a58,109
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 shl al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 shl ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 shl eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_SHIFT_FLAGS(host_flags, op2);
+> #ifdef SET_UNDEFINED_FLAG
+>    SET_AF(UNDEFINED_FLAG);
+> #endif
+>    }
+> #else
+>    {
+>    IU32 result;
+53,54d111
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+88a146,147
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\shr.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\shr.c
+47a49,50
+>    if ( (op2 &= 0x1f) == 0 )
+>       return;
+47a52,56
+> #ifdef i386
+>    {
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+47a58,108
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov al, a
+> 	 mov cl, cnt
+> 	 shr al, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, r;
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov ax, a
+> 	 mov cl, cnt
+> 	 shr ax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: { /* 32 */
+>       IU8 cnt = (IU8)op2;
+>       __asm {
+> 	 mov eax, op1
+> 	 mov cl, cnt
+> 	 shr eax, cl
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_SHIFT_FLAGS(host_flags, op2);
+> #ifdef SET_UNDEFINED_FLAG
+>    SET_AF(UNDEFINED_FLAG);
+> #endif
+>    }
+> #else
+>    {
+53,54d111
+<    if ( (op2 &= 0x1f) == 0 )
+<       return;
+87a145,146
+> #endif /* i386 */
+>    }
+--- NT4\private\mvdm\softpc.new\base\ccpu386\sub.c
++++ nt\private\mvdm\softpc.new\base\ccpu386\sub.c
+48a49,52
+> #ifdef i386
+>    IU32 op1 = *pop1;
+>    IU32 result;
+>    IU32 host_flags;
+48a54,92
+>    switch (op_sz)
+>       {
+>    case 8: {
+>       IU8 a = (IU8)op1, b = (IU8)op2, r;
+>       __asm {
+> 	 mov al, a
+> 	 sub al, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, al
+>       }
+>       result = r;
+>       break;
+>       }
+>    case 16: {
+>       IU16 a = (IU16)op1, b = (IU16)op2, r;
+>       __asm {
+> 	 mov ax, a
+> 	 sub ax, b
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov r, ax
+>       }
+>       result = r;
+>       break;
+>       }
+>    default: /* 32 */
+>       __asm {
+> 	 mov eax, op1
+> 	 sub eax, op2
+> 	 pushfd
+> 	 pop host_flags
+> 	 mov result, eax
+>       }
+>       break;
+>       }
+>    *pop1 = result;
+>    UNPACK_HOST_ARITH_FLAGS(host_flags);
+> #else
+65a110
+> #endif /* i386 */

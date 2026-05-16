@@ -13,6 +13,12 @@ ccpu_regs.patch     - Adds functions to access registers from the CCPU
 ccpu_segperm.patch  - Patches a potential bug in the CCPU that causes
                       segment access permission to be set to 0 and not
                       restored on going back to realmode.
+ccpu_optim_alu.patch- Optimizes some CCPU ALU operations
+ccpu_optim_asm.patch- Optimizes CCPU by doing some ALU operations on i386
+                      directly in ASM so that flags get already managed by 
+                      host CPU
+ccpu_optim_sas.patch- Optimizes CCPU string operations to plug into 
+                      multi-byte operations functions in SAS layer.
 console.patch       - Fixes console startup bug that would otherwise not init
                       colors of console properly and would therefore cause
                       black chars on black screen.

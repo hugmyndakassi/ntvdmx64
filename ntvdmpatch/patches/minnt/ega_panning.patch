@@ -1,0 +1,496 @@
+--- NT4\private\mvdm\softpc.new\host\src\nt_ega.c
++++ nt\private\mvdm\softpc.new\host\src\nt_ega.c
+589a590,596
+>     /* Horizontal pel-panning support. pan = 0..7 (8-pixel mode); when
+>        non-zero, each output byte is built by combining the END of one
+>        source byte and the START of the next, shifting the displayed
+>        image left by `pan` pixels. */
+>     int  pan;
+>     unsigned int next_dword;
+>     unsigned int next_d0, next_d1, next_d2, next_d3;
+630a638,643
+>     /* Sample pel-panning once per call. Mode 0xD uses 8-pixel bytes so
+>        only the low 3 bits matter. screen_refresh_required() is invoked
+>        on every pel_panning write, so dirty-rect scan will cover the
+>        whole screen on the next frame when pan changes. */
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+649,655c662,671
+<         do
+<         {
+<             data0 = *p0++;
+<             data3 = HIBYTE(HIWORD(data0));
+<             data2 = LOBYTE(HIWORD(data0));
+<             data1 = HIBYTE(LOWORD(data0));
+<             data0 = LOBYTE(LOWORD(data0));
+---
+>         if (pan == 0)
+>         {
+>             /* Fast path: each output byte uses one source byte (identity). */
+>             do
+>             {
+>                 data0 = *p0++;
+>                 data3 = HIBYTE(HIWORD(data0));
+>                 data2 = LOBYTE(HIWORD(data0));
+>                 data1 = HIBYTE(LOWORD(data0));
+>                 data0 = LOBYTE(LOWORD(data0));
+657,661c673,677
+<             *(dest_ptr + longs_per_scanline)
+<                 = *dest_ptr
+<                 = ega_lo_graph_3_0[data0] | ega_lo_graph_3_1[data1]
+<                         | ega_lo_graph_3_2[data2] | ega_lo_graph_3_3[data3];
+<             dest_ptr++;
+---
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_3_0[data0] | ega_lo_graph_3_1[data1]
+>                             | ega_lo_graph_3_2[data2] | ega_lo_graph_3_3[data3];
+>                 dest_ptr++;
+663,667c679,683
+<             *(dest_ptr + longs_per_scanline)
+<                 = *dest_ptr
+<                 = ega_lo_graph_2_0[data0] | ega_lo_graph_2_1[data1]
+<                         | ega_lo_graph_2_2[data2] | ega_lo_graph_2_3[data3];
+<             dest_ptr++;
+---
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_2_0[data0] | ega_lo_graph_2_1[data1]
+>                             | ega_lo_graph_2_2[data2] | ega_lo_graph_2_3[data3];
+>                 dest_ptr++;
+669,673c685,689
+<             *(dest_ptr + longs_per_scanline)
+<                 = *dest_ptr
+<                 = ega_lo_graph_1_0[data0] | ega_lo_graph_1_1[data1]
+<                         | ega_lo_graph_1_2[data2] | ega_lo_graph_1_3[data3];
+<             dest_ptr++;
+---
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_1_0[data0] | ega_lo_graph_1_1[data1]
+>                             | ega_lo_graph_1_2[data2] | ega_lo_graph_1_3[data3];
+>                 dest_ptr++;
+675,679c691,695
+<             *(dest_ptr + longs_per_scanline)
+<                 = *dest_ptr
+<                 = ega_lo_graph_0_0[data0] | ega_lo_graph_0_1[data1]
+<                         | ega_lo_graph_0_2[data2] | ega_lo_graph_0_3[data3];
+<             dest_ptr++;
+---
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_0_0[data0] | ega_lo_graph_0_1[data1]
+>                             | ega_lo_graph_0_2[data2] | ega_lo_graph_0_3[data3];
+>                 dest_ptr++;
+681,682c697,756
+<         }
+<         while((--local_width)>0);
+---
+>             }
+>             while((--local_width)>0);
+>         }
+>         else
+>         {
+>             /* Pan-aware path: each output byte combines bits from the
+>                CURRENT source byte (left-shifted by pan) with the high
+>                (8-pan) bits of the NEXT source byte (right-shifted into
+>                position). The pan==0 case reduces to identity but we
+>                branch above for speed. */
+>             int  rshift = 8 - pan;
+>             do
+>             {
+>                 data0 = *p0;
+>                 next_dword = *(p0 + 1);
+>                 p0++;
+> 
+>                 data3 = HIBYTE(HIWORD(data0));
+>                 data2 = LOBYTE(HIWORD(data0));
+>                 data1 = HIBYTE(LOWORD(data0));
+>                 data0 = LOBYTE(LOWORD(data0));
+> 
+>                 next_d3 = HIBYTE(HIWORD(next_dword));
+>                 next_d2 = LOBYTE(HIWORD(next_dword));
+>                 next_d1 = HIBYTE(LOWORD(next_dword));
+>                 next_d0 = LOBYTE(LOWORD(next_dword));
+> 
+>                 /* Shift + merge per plane: output = (cur<<pan) | (next>>(8-pan)) */
+>                 data0 = ((data0 << pan) | (next_d0 >> rshift)) & 0xff;
+>                 data1 = ((data1 << pan) | (next_d1 >> rshift)) & 0xff;
+>                 data2 = ((data2 << pan) | (next_d2 >> rshift)) & 0xff;
+>                 data3 = ((data3 << pan) | (next_d3 >> rshift)) & 0xff;
+> 
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_3_0[data0] | ega_lo_graph_3_1[data1]
+>                             | ega_lo_graph_3_2[data2] | ega_lo_graph_3_3[data3];
+>                 dest_ptr++;
+> 
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_2_0[data0] | ega_lo_graph_2_1[data1]
+>                             | ega_lo_graph_2_2[data2] | ega_lo_graph_2_3[data3];
+>                 dest_ptr++;
+> 
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_1_0[data0] | ega_lo_graph_1_1[data1]
+>                             | ega_lo_graph_1_2[data2] | ega_lo_graph_1_3[data3];
+>                 dest_ptr++;
+> 
+>                 *(dest_ptr + longs_per_scanline)
+>                     = *dest_ptr
+>                     = ega_lo_graph_0_0[data0] | ega_lo_graph_0_1[data1]
+>                             | ega_lo_graph_0_2[data2] | ega_lo_graph_0_3[data3];
+>                 dest_ptr++;
+> 
+>             }
+>             while((--local_width)>0);
+>         }
+723a798,802
+>     /* Horizontal pel-panning — see nt_ega_lo_graph_std for semantics.
+>        Pre-shift the row into a stack buffer when pan>0 so the inner
+>        lookup loop stays identical to the no-pan fast path. */
+>     int            pan;
+>     unsigned int   shifted_row[41];   /* max width = 40 bytes + 1 lookahead */
+763a843,844
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+771a853,874
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = ref_p0[i];
+>                 unsigned int nxt = ref_p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((nxt      ) & 0xff);
+>                 unsigned int n1 = ((nxt >>  8) & 0xff);
+>                 unsigned int n2 = ((nxt >> 16) & 0xff);
+>                 unsigned int n3 = ((nxt >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             p0 = shifted_row;
+>         }
+881a985,986
+>     int            pan;
+>     unsigned int   shifted_row[41];   /* max width = 40 bytes + 1 lookahead */
+923a1029,1030
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+931a1039,1060
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = ref_p0[i];
+>                 unsigned int nxt = ref_p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((nxt      ) & 0xff);
+>                 unsigned int n1 = ((nxt >>  8) & 0xff);
+>                 unsigned int n2 = ((nxt >> 16) & 0xff);
+>                 unsigned int n3 = ((nxt >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             p0 = shifted_row;
+>         }
+1058a1188,1194
+>     /* Horizontal pel-panning support — see nt_ega_lo_graph_std for the
+>        semantics. When pan>0, we pre-shift one row's worth of plane data
+>        into a stack buffer before handing it to ega_colour_hi_munge, so
+>        the shared munge helper itself can stay unchanged. */
+>     int                      pan;
+>     unsigned int             shifted_row[81];  /* max width 80 + 1 lookahead */
+>     unsigned int            *src;
+1094a1231,1232
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+1101c1239,1265
+<         ega_colour_hi_munge((unsigned char *) p0,
+---
+>         src = p0;
+>         if (pan != 0) {
+>             /* Pre-shift this row's plane data into shifted_row[]. Each
+>                4-byte unit holds plane 0..3 of one pixel-byte in low-to-
+>                high byte order. Per plane: (cur<<pan) | (next>>(8-pan)). */
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = p0[i];
+>                 unsigned int next = p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((next      ) & 0xff);
+>                 unsigned int n1 = ((next >>  8) & 0xff);
+>                 unsigned int n2 = ((next >> 16) & 0xff);
+>                 unsigned int n3 = ((next >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             src = shifted_row;
+>         }
+>         ega_colour_hi_munge((unsigned char *) src,
+1139a1304,1306
+>     int                      pan;
+>     unsigned int             shifted_row[81];   /* max width 80 + 1 lookahead */
+>     unsigned int            *src;
+1171a1339,1340
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+1177c1346,1369
+<         ega_colour_hi_munge_big( (unsigned char *) p0,
+---
+>         src = p0;
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = p0[i];
+>                 unsigned int nxt = p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((nxt      ) & 0xff);
+>                 unsigned int n1 = ((nxt >>  8) & 0xff);
+>                 unsigned int n2 = ((nxt >> 16) & 0xff);
+>                 unsigned int n3 = ((nxt >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             src = shifted_row;
+>         }
+>         ega_colour_hi_munge_big( (unsigned char *) src,
+1216a1409,1411
+>     int                      pan;
+>     unsigned int             shifted_row[81];   /* max width 80 + 1 lookahead */
+>     unsigned int            *src;
+1248a1444,1445
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+1254c1451,1474
+<         ega_colour_hi_munge_huge( (unsigned char *) p0,
+---
+>         src = p0;
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = p0[i];
+>                 unsigned int nxt = p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((nxt      ) & 0xff);
+>                 unsigned int n1 = ((nxt >>  8) & 0xff);
+>                 unsigned int n2 = ((nxt >> 16) & 0xff);
+>                 unsigned int n3 = ((nxt >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             src = shifted_row;
+>         }
+>         ega_colour_hi_munge_huge( (unsigned char *) src,
+1292a1513,1517
+>     /* Horizontal pel-panning support — see nt_ega_lo_graph_std for the
+>        semantics. Pre-shift one row into a stack buffer if pan>0. */
+>     int                      pan;
+>     unsigned int             shifted_row[81];  /* max width 80 + 1 lookahead */
+>     unsigned int            *src;
+1324a1550,1551
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+1330c1557,1580
+<         ega_colour_hi_munge((unsigned char *) p0,
+---
+>         src = p0;
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = p0[i];
+>                 unsigned int next = p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((next      ) & 0xff);
+>                 unsigned int n1 = ((next >>  8) & 0xff);
+>                 unsigned int n2 = ((next >> 16) & 0xff);
+>                 unsigned int n3 = ((next >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             src = shifted_row;
+>         }
+>         ega_colour_hi_munge((unsigned char *) src,
+1372a1623,1625
+>     int                      pan;
+>     unsigned int             shifted_row[81];   /* max width 80 + 1 lookahead */
+>     unsigned int            *src;
+1432a1686,1687
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+1438c1693,1716
+<         ega_colour_hi_munge_big((unsigned char *) p0,
+---
+>         src = p0;
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = p0[i];
+>                 unsigned int nxt = p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((nxt      ) & 0xff);
+>                 unsigned int n1 = ((nxt >>  8) & 0xff);
+>                 unsigned int n2 = ((nxt >> 16) & 0xff);
+>                 unsigned int n3 = ((nxt >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             src = shifted_row;
+>         }
+>         ega_colour_hi_munge_big((unsigned char *) src,
+1493a1772,1774
+>     int                      pan;
+>     unsigned int             shifted_row[81];   /* max width 80 + 1 lookahead */
+>     unsigned int            *src;
+1525a1807,1808
+>     pan = ega_get_pel_panning() & 0x07;
+> 
+1531c1814,1837
+<         ega_colour_hi_munge_huge((unsigned char *) p0,
+---
+>         src = p0;
+>         if (pan != 0) {
+>             int i;
+>             int rshift = 8 - pan;
+>             for (i = 0; i < width; i++) {
+>                 unsigned int cur = p0[i];
+>                 unsigned int nxt = p0[i + 1];
+>                 unsigned int b0 = ((cur      ) & 0xff);
+>                 unsigned int b1 = ((cur >>  8) & 0xff);
+>                 unsigned int b2 = ((cur >> 16) & 0xff);
+>                 unsigned int b3 = ((cur >> 24) & 0xff);
+>                 unsigned int n0 = ((nxt      ) & 0xff);
+>                 unsigned int n1 = ((nxt >>  8) & 0xff);
+>                 unsigned int n2 = ((nxt >> 16) & 0xff);
+>                 unsigned int n3 = ((nxt >> 24) & 0xff);
+>                 b0 = ((b0 << pan) | (n0 >> rshift)) & 0xff;
+>                 b1 = ((b1 << pan) | (n1 >> rshift)) & 0xff;
+>                 b2 = ((b2 << pan) | (n2 >> rshift)) & 0xff;
+>                 b3 = ((b3 << pan) | (n3 >> rshift)) & 0xff;
+>                 shifted_row[i] = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+>             }
+>             src = shifted_row;
+>         }
+>         ega_colour_hi_munge_huge((unsigned char *) src,
+--- NT4\private\mvdm\softpc.new\base\video\vga_prts.c
++++ nt\private\mvdm\softpc.new\base\video\vga_prts.c
+2836c2836,2839
+< 			attribute_controller.horizontal_pel_panning.as.abyte = value;
+---
+> 			if (attribute_controller.horizontal_pel_panning.as.abyte != value) {
+> 				attribute_controller.horizontal_pel_panning.as.abyte = value;
+> 				screen_refresh_required();
+> 			}
+3404a3408,3418
+> 
+> 
+> /* Get horizontal pel panning value (0..7 for 8-pixel modes, 0..8 for
+>    9-pixel text mode). Used by the host paint functions (nt_ega.c) to
+>    apply sub-byte horizontal scroll when converting cvidc planes to
+>    the host bitmap. Always available (not HUNTER-only) — the renderer
+>    needs it on every frame. */
+> int ega_get_pel_panning IFN0()
+> {
+>     return attribute_controller.horizontal_pel_panning.as.abyte & 0x0f;
+> }
+--- NT4\private\mvdm\softpc.new\base\video\ega_prts.c
++++ nt\private\mvdm\softpc.new\base\video\ega_prts.c
+684,688c684,692
+<         not_used                           : 4,
+<         background_intensity_or_blink      : 1,    /* NO - never blink                     */
+<         enable_line_graphics_char_codes    : 1,    /* NO mono display only                 */
+<         display_type                       : 1,    /* NO - always colour display           */
+<         graphics_mode                      : 1;    /* YES - with Sequencer Mode reg        */
+---
+>         select_video_bits                  : 1,    /* bit 7: P5/P4 palette select          */
+>         color_output_assembler             : 1,    /* bit 6: 8-bit colour enable           */
+>         horiz_pan_mode                     : 1,    /* bit 5: PPM — pan disabled in lower
+>                                                               split when set                */
+>         reserved                           : 1,    /* bit 4                                */
+>         background_intensity_or_blink      : 1,    /* bit 3: NO - never blink              */
+>         enable_line_graphics_char_codes    : 1,    /* bit 2: NO mono display only          */
+>         display_type                       : 1,    /* bit 1: NO - always colour display    */
+>         graphics_mode                      : 1;    /* bit 0: YES - with Sequencer Mode reg */
+1044,1048c1048,1056
+<         unsigned graphics_mode                      : 1,    /* YES - with Sequencer Mode reg        */
+<         display_type                       : 1,    /* NO - always colour display           */
+<         enable_line_graphics_char_codes    : 1,    /* NO mono display only                 */
+<         background_intensity_or_blink      : 1,    /* NO - never blink                     */
+<         not_used                           : 4;
+---
+>         unsigned graphics_mode                      : 1,    /* bit 0: YES - with Sequencer Mode reg */
+>         display_type                       : 1,    /* bit 1: NO - always colour display    */
+>         enable_line_graphics_char_codes    : 1,    /* bit 2: NO mono display only          */
+>         background_intensity_or_blink      : 1,    /* bit 3: NO - never blink              */
+>         reserved                           : 1,    /* bit 4                                */
+>         horiz_pan_mode                     : 1,    /* bit 5: PPM — pan disabled in lower
+>                                                               split when set                */
+>         color_output_assembler             : 1,    /* bit 6: 8-bit colour enable           */
+>         select_video_bits                  : 1;    /* bit 7: P5/P4 palette select          */
+3350c3358,3364
+<             NON_PROD(attribute_controller.horizontal_pel_panning.as.abyte = value);
+---
+>             /* NB: NON_PROD wrapper removed — pel_panning must be stored in
+>                production builds too, otherwise any caller reading back the
+>                register (e.g. BIOS) gets stale data. Matches vga_prts.c. */
+>             if (attribute_controller.horizontal_pel_panning.as.abyte != value) {
+>                 attribute_controller.horizontal_pel_panning.as.abyte = value;
+>                 screen_refresh_required();
+>             }
+--- NT4\private\mvdm\softpc.new\base\inc\egaports.h
++++ nt\private\mvdm\softpc.new\base\inc\egaports.h
+34a35,40
+> 	/* Horizontal pel-panning (AC index 0x13). Returns 0..7 (8-pixel modes)
+> 	   or 0..8 (9-pixel text). The host paint functions in nt_ega.c use it
+> 	   to shift the source-byte read window when converting cvidc planes
+> 	   to host bitmap pixels. */
+> 	extern int ega_get_pel_panning IPT0();
+> 

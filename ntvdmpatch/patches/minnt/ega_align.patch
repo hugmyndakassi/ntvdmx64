@@ -1,0 +1,68 @@
+--- NT4\private\mvdm\softpc.new\base\video\gfx_updt.c
++++ nt\private\mvdm\softpc.new\base\video\gfx_updt.c
+272a273,290
+> /*
+>  * Per-paint-cycle byte alignment offset for the dirty-rect path.
+>  *
+>  * When screen_start is not a multiple of 4 (which Keen 4-style byte-level
+>  * scrolling routinely produces), the dirty mark machinery loses the bottom
+>  * 2 bits of every byte address via the `>>2` shift used to index video_copy.
+>  * search_video_copy then records video_copy_offset in 4-byte-chunk units,
+>  * and paint_records reconstructs a memory address that's off by up to 3 bytes
+>  * (= up to 24 pixels of horizontal shift).
+>  *
+>  * The caller (ega_split_graph_update / ega_graph_update) sets this to
+>  * (screen_start & 3) before each paint_records call for upper-half records,
+>  * and to 0 for lower-half records (whose lines start at the 4-byte-aligned
+>  * base offset 0). paint_records adds it to the offset passed to paint_screen
+>  * so the source bytes match what the full-refresh path would read.
+>  */
+> GLOBAL int      current_paint_alignment = 0;
+> 
+501c519
+<                         (*paint_screen)((dirty_vc_offset<<2) + dirty_frig + cur_start,
+---
+>                         (*paint_screen)((dirty_vc_offset<<2) + current_paint_alignment + dirty_frig + cur_start,
+506c524
+<                         (*paint_screen)((dirty_vc_offset<<2) + cur_start,
+---
+>                         (*paint_screen)((dirty_vc_offset<<2) + current_paint_alignment + cur_start,
+1877a1896,1897
+>                 /* See current_paint_alignment declaration for rationale. */
+>                 current_paint_alignment = get_screen_start() & 3;
+1878a1899
+>                 current_paint_alignment = 0;
+1929a1951,1955
+>                 /* Upper-half lines start at memory byte (screen_start + Y*opl);
+>                  * for opl divisible by 4, the per-line byte alignment is just
+>                  * (screen_start & 3). Lower-half lines start at base 0, so
+>                  * alignment is 0. See current_paint_alignment for full rationale. */
+>                 current_paint_alignment = get_screen_start() & 3;
+1930a1957
+>                 current_paint_alignment = 0;
+2201a2229,2234
+>                                 /* For non-aligned screen_start (Keen-style byte scroll),
+>                                  * the dirty marks lose the low 2 bits via >>2; restore
+>                                  * them here. See current_paint_alignment declaration for
+>                                  * full rationale. ega_graph_update has no separate lower
+>                                  * half — all records are upper-style. */
+>                                 current_paint_alignment = (get_screen_start() + start_line*opl) & 3;
+2202a2236
+>                                 current_paint_alignment = 0;
+2284a2319,2320
+>                         /* See current_paint_alignment declaration for rationale. */
+>                         current_paint_alignment = get_screen_start() & 3;
+2300c2336,2338
+<                          * now do wrapped area
+---
+>                          * now do wrapped area: post-wrap section begins at
+>                          * memory byte `wrapped_bytes` from the start of the
+>                          * plane, alignment depends on those bytes mod 4.
+2302a2341
+>                         current_paint_alignment = wrapped_bytes & 3;
+2303a2343
+>                         current_paint_alignment = 0;
+2306a2347
+>                         current_paint_alignment = get_screen_start() & 3;
+2307a2349
+>                         current_paint_alignment = 0;
